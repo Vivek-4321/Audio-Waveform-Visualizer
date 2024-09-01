@@ -1,0 +1,830 @@
+<!-- <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Waveform Visualizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+        }
+        #waveform {
+            width: 600px;
+            height: 200px;
+            background-color: #e0e0e0;
+            position: relative;
+            overflow: hidden;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        #waveform-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #progress-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            background-color: rgba(52, 152, 219, 0.3);
+            pointer-events: none;
+        }
+        #play-pause {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Audio Waveform Visualizer</h1>
+    <input type="file" id="audioFile" accept="audio/*">
+    <div id="waveform">
+        <canvas id="waveform-canvas"></canvas>
+        <div id="progress-overlay"></div>
+    </div>
+    <button id="play-pause">Play</button>
+
+    <script>
+        const audioFile = document.getElementById('audioFile');
+        const waveform = document.getElementById('waveform');
+        const waveformCanvas = document.getElementById('waveform-canvas');
+        const progressOverlay = document.getElementById('progress-overlay');
+        const playPauseButton = document.getElementById('play-pause');
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        let audioBuffer = null;
+        let audioSource = null;
+        let isPlaying = false;
+        let startTime = 0;
+        let pausedAt = 0;
+        let waveformData = [];
+
+        audioFile.addEventListener('change', function() {
+            const file = this.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const arrayBuffer = e.target.result;
+                audioContext.decodeAudioData(arrayBuffer, function(buffer) {
+                    audioBuffer = buffer;
+                    processAudioData(buffer);
+                    drawWaveform();
+                });
+            };
+
+            reader.readAsArrayBuffer(file);
+        });
+
+        playPauseButton.addEventListener('click', togglePlayPause);
+        waveform.addEventListener('click', seekAudio);
+        waveform.addEventListener('mousemove', handleDrag);
+
+        function processAudioData(buffer) {
+            const data = buffer.getChannelData(0);
+            const width = waveform.clientWidth;
+            const barWidth = 2;
+            const barGap = 1;
+            const totalBars = Math.floor(width / (barWidth + barGap));
+            const samplesPerBar = Math.floor(data.length / totalBars);
+
+            waveformData = [];
+
+            for (let i = 0; i < totalBars; i++) {
+                let peakToPeak = 0;
+                for (let j = 0; j < samplesPerBar; j++) {
+                    const sample = data[i * samplesPerBar + j];
+                    if (sample > peakToPeak) {
+                        peakToPeak = sample;
+                    } else if (sample < -peakToPeak) {
+                        peakToPeak = -sample;
+                    }
+                }
+                waveformData.push(peakToPeak);
+            }
+        }
+
+        function drawWaveform() {
+            const width = waveform.clientWidth;
+            const height = waveform.clientHeight;
+            const barWidth = 2;
+            const barGap = 1;
+
+            waveformCanvas.width = width;
+            waveformCanvas.height = height;
+            const context = waveformCanvas.getContext('2d');
+
+            const maxAmplitude = Math.max(...waveformData);
+
+            for (let i = 0; i < waveformData.length; i++) {
+                const barHeight = (waveformData[i] / maxAmplitude) * height * 0.8;
+                const x = i * (barWidth + barGap);
+                const y = (height - barHeight) / 2;
+
+                context.fillStyle = '#bdc3c7';
+                context.fillRect(x, y, barWidth, barHeight);
+            }
+        }
+
+        function togglePlayPause() {
+            if (isPlaying) {
+                pauseAudio();
+            } else {
+                playAudio();
+            }
+        }
+
+        function playAudio() {
+            if (!audioBuffer) return;
+
+            audioSource = audioContext.createBufferSource();
+            audioSource.buffer = audioBuffer;
+            audioSource.connect(audioContext.destination);
+
+            if (pausedAt) {
+                startTime = audioContext.currentTime - pausedAt;
+                audioSource.start(0, pausedAt);
+            } else {
+                startTime = audioContext.currentTime;
+                audioSource.start();
+            }
+
+            isPlaying = true;
+            playPauseButton.textContent = 'Pause';
+            updateProgress();
+        }
+
+        function pauseAudio() {
+            if (!audioSource) return;
+
+            audioSource.stop();
+            pausedAt = audioContext.currentTime - startTime;
+            isPlaying = false;
+            playPauseButton.textContent = 'Play';
+        }
+
+        function updateProgress() {
+            if (!isPlaying) return;
+
+            const currentTime = audioContext.currentTime - startTime;
+            const progress = currentTime / audioBuffer.duration;
+
+            progressOverlay.style.width = `${progress * 100}%`;
+
+            if (progress < 1) {
+                requestAnimationFrame(updateProgress);
+            } else {
+                isPlaying = false;
+                playPauseButton.textContent = 'Play';
+                progressOverlay.style.width = '0%';
+                pausedAt = 0;
+            }
+        }
+
+        function seekAudio(event) {
+            if (!audioBuffer) return;
+
+            const rect = waveform.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const progress = x / rect.width;
+
+            if (isPlaying) {
+                pauseAudio();
+            }
+
+            pausedAt = progress * audioBuffer.duration;
+            progressOverlay.style.width = `${progress * 100}%`;
+            playAudio();
+        }
+
+        let isDragging = false;
+
+        function handleDrag(event) {
+            if (event.buttons !== 1) return; // Check if left mouse button is pressed
+
+            seekAudio(event);
+        }
+    </script>
+</body>
+</html> -->
+
+<!-- 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customizable Audio Waveform Visualizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+        }
+        #waveform {
+            width: 600px;
+            height: 200px;
+            background-color: #e0e0e0;
+            position: relative;
+            overflow: hidden;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        #waveform-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #progress-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            background-color: rgba(52, 152, 219, 0.3);
+            pointer-events: none;
+        }
+        #play-pause, #bar-width-control {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+        #bar-width-control {
+            display: flex;
+            align-items: center;
+        }
+        #bar-width-control input {
+            margin-left: 10px;
+            width: 50px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Customizable Audio Waveform Visualizer</h1>
+    <input type="file" id="audioFile" accept="audio/*">
+    <div id="waveform">
+        <canvas id="waveform-canvas"></canvas>
+        <div id="progress-overlay"></div>
+    </div>
+    <button id="play-pause">Play</button>
+    <div id="bar-width-control">
+        <label for="bar-width">Bar Width:</label>
+        <input type="number" id="bar-width" min="1" max="10" value="2">
+    </div>
+
+    <script>
+        const audioFile = document.getElementById('audioFile');
+        const waveform = document.getElementById('waveform');
+        const waveformCanvas = document.getElementById('waveform-canvas');
+        const progressOverlay = document.getElementById('progress-overlay');
+        const playPauseButton = document.getElementById('play-pause');
+        const barWidthInput = document.getElementById('bar-width');
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        let audioBuffer = null;
+        let audioSource = null;
+        let isPlaying = false;
+        let startTime = 0;
+        let pausedAt = 0;
+        let rawWaveformData = [];
+        let processedWaveformData = [];
+        let barWidth = 2;
+        let barGap = 1;
+
+        audioFile.addEventListener('change', handleFileUpload);
+        playPauseButton.addEventListener('click', togglePlayPause);
+        waveform.addEventListener('click', seekAudio);
+        waveform.addEventListener('mousemove', handleDrag);
+        barWidthInput.addEventListener('change', updateBarWidth);
+
+        function handleFileUpload() {
+            const file = this.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const arrayBuffer = e.target.result;
+                audioContext.decodeAudioData(arrayBuffer, function(buffer) {
+                    audioBuffer = buffer;
+                    processRawAudioData(buffer);
+                    updateProcessedWaveformData();
+                    drawWaveform();
+                });
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function processRawAudioData(buffer) {
+            const data = buffer.getChannelData(0);
+            const sampleSize = 200; // Adjust this value to change the resolution
+            rawWaveformData = [];
+
+            for (let i = 0; i < data.length; i += sampleSize) {
+                let peakToPeak = 0;
+                for (let j = 0; j < sampleSize; j++) {
+                    const sample = data[i + j] || 0;
+                    if (sample > peakToPeak) {
+                        peakToPeak = sample;
+                    } else if (sample < -peakToPeak) {
+                        peakToPeak = -sample;
+                    }
+                }
+                rawWaveformData.push(peakToPeak);
+            }
+        }
+
+        function updateProcessedWaveformData() {
+            const width = waveform.clientWidth;
+            const totalBars = Math.floor(width / (barWidth + barGap));
+            const samplesPerBar = Math.floor(rawWaveformData.length / totalBars);
+
+            processedWaveformData = [];
+
+            for (let i = 0; i < totalBars; i++) {
+                let peakToPeak = 0;
+                for (let j = 0; j < samplesPerBar; j++) {
+                    const sample = rawWaveformData[i * samplesPerBar + j] || 0;
+                    if (sample > peakToPeak) {
+                        peakToPeak = sample;
+                    }
+                }
+                processedWaveformData.push(peakToPeak);
+            }
+        }
+
+        function drawWaveform() {
+            const width = waveform.clientWidth;
+            const height = waveform.clientHeight;
+
+            waveformCanvas.width = width;
+            waveformCanvas.height = height;
+            const context = waveformCanvas.getContext('2d');
+
+            const maxAmplitude = Math.max(...processedWaveformData);
+
+            for (let i = 0; i < processedWaveformData.length; i++) {
+                const barHeight = (processedWaveformData[i] / maxAmplitude) * height * 0.8;
+                const x = i * (barWidth + barGap);
+                const y = (height - barHeight) / 2;
+
+                context.fillStyle = '#bdc3c7';
+                context.fillRect(x, y, barWidth, barHeight);
+            }
+        }
+
+        function updateBarWidth() {
+            barWidth = parseInt(barWidthInput.value);
+            updateProcessedWaveformData();
+            drawWaveform();
+        }
+
+        function togglePlayPause() {
+            if (isPlaying) {
+                pauseAudio();
+            } else {
+                playAudio();
+            }
+        }
+
+        function playAudio() {
+            if (!audioBuffer) return;
+
+            audioSource = audioContext.createBufferSource();
+            audioSource.buffer = audioBuffer;
+            audioSource.connect(audioContext.destination);
+
+            if (pausedAt) {
+                startTime = audioContext.currentTime - pausedAt;
+                audioSource.start(0, pausedAt);
+            } else {
+                startTime = audioContext.currentTime;
+                audioSource.start();
+            }
+
+            isPlaying = true;
+            playPauseButton.textContent = 'Pause';
+            updateProgress();
+        }
+
+        function pauseAudio() {
+            if (!audioSource) return;
+
+            audioSource.stop();
+            pausedAt = audioContext.currentTime - startTime;
+            isPlaying = false;
+            playPauseButton.textContent = 'Play';
+        }
+
+        function updateProgress() {
+            if (!isPlaying) return;
+
+            const currentTime = audioContext.currentTime - startTime;
+            const progress = currentTime / audioBuffer.duration;
+
+            progressOverlay.style.width = `${progress * 100}%`;
+
+            if (progress < 1) {
+                requestAnimationFrame(updateProgress);
+            } else {
+                isPlaying = false;
+                playPauseButton.textContent = 'Play';
+                progressOverlay.style.width = '0%';
+                pausedAt = 0;
+            }
+        }
+
+        function seekAudio(event) {
+            if (!audioBuffer) return;
+
+            const rect = waveform.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const progress = x / rect.width;
+
+            if (isPlaying) {
+                pauseAudio();
+            }
+
+            pausedAt = progress * audioBuffer.duration;
+            progressOverlay.style.width = `${progress * 100}%`;
+            playAudio();
+        }
+
+        function handleDrag(event) {
+            if (event.buttons !== 1) return; // Check if left mouse button is pressed
+            seekAudio(event);
+        }
+    </script>
+</body>
+</html> -->
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Audio Waveform Visualizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #1e1e1e;
+            color: #ffffff;
+        }
+        #waveform {
+            width: 800px;
+            height: 200px;
+            background-color: #2d2d2d;
+            position: relative;
+            overflow: hidden;
+            border-radius: 10px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        #waveform-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #progress-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            background-color: rgba(52, 152, 219, 0.3);
+            pointer-events: none;
+        }
+        button, input, select {
+            margin-top: 10px;
+            padding: 8px 16px;
+            font-size: 14px;
+            background-color: #3a3a3a;
+            color: #ffffff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .control-group label {
+            margin-right: 10px;
+        }
+        #visualization-type {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Advanced Audio Waveform Visualizer</h1>
+    <input type="file" id="audioFile" accept="audio/*">
+    <div id="waveform">
+        <canvas id="waveform-canvas"></canvas>
+        <div id="progress-overlay"></div>
+    </div>
+    <div class="control-group">
+        <button id="play-pause">Play</button>
+        <select id="playback-speed">
+            <option value="1">1x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2x</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label for="bar-width">Bar Width:</label>
+        <input type="number" id="bar-width" min="1" max="10" value="2">
+    </div>
+    <div class="control-group">
+        <label for="bar-color">Bar Color:</label>
+        <input type="color" id="bar-color" value="#bdc3c7">
+    </div>
+    <div class="control-group">
+        <label for="played-color">Played Color:</label>
+        <input type="color" id="played-color" value="#3498db">
+    </div>
+    <div class="control-group">
+        <label for="bar-radius">Bar Radius:</label>
+        <input type="number" id="bar-radius" min="0" max="10" value="0">
+    </div>
+    <select id="visualization-type">
+        <option value="bars">Bars</option>
+        <option value="line">Line</option>
+        <option value="circles">Circles</option>
+    </select>
+
+    <script>
+        const audioFile = document.getElementById('audioFile');
+        const waveform = document.getElementById('waveform');
+        const waveformCanvas = document.getElementById('waveform-canvas');
+        const progressOverlay = document.getElementById('progress-overlay');
+        const playPauseButton = document.getElementById('play-pause');
+        const barWidthInput = document.getElementById('bar-width');
+        const barColorInput = document.getElementById('bar-color');
+        const playedColorInput = document.getElementById('played-color');
+        const barRadiusInput = document.getElementById('bar-radius');
+        const playbackSpeedSelect = document.getElementById('playback-speed');
+        const visualizationTypeSelect = document.getElementById('visualization-type');
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        let audioBuffer = null;
+        let audioSource = null;
+        let isPlaying = false;
+        let startTime = 0;
+        let pausedAt = 0;
+        let rawWaveformData = [];
+        let processedWaveformData = [];
+        let barWidth = 2;
+        let barGap = 1;
+        let barColor = '#bdc3c7';
+        let playedColor = '#3498db';
+        let barRadius = 0;
+        let playbackSpeed = 1;
+        let visualizationType = 'bars';
+
+        audioFile.addEventListener('change', handleFileUpload);
+        playPauseButton.addEventListener('click', togglePlayPause);
+        waveform.addEventListener('click', seekAudio);
+        waveform.addEventListener('mousemove', handleDrag);
+        barWidthInput.addEventListener('change', updateVisualization);
+        barColorInput.addEventListener('change', updateVisualization);
+        playedColorInput.addEventListener('change', updateVisualization);
+        barRadiusInput.addEventListener('change', updateVisualization);
+        playbackSpeedSelect.addEventListener('change', updatePlaybackSpeed);
+        visualizationTypeSelect.addEventListener('change', updateVisualization);
+
+        function handleFileUpload() {
+            const file = this.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const arrayBuffer = e.target.result;
+                audioContext.decodeAudioData(arrayBuffer, function(buffer) {
+                    audioBuffer = buffer;
+                    processRawAudioData(buffer);
+                    updateProcessedWaveformData();
+                    drawWaveform();
+                });
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function processRawAudioData(buffer) {
+            const data = buffer.getChannelData(0);
+            const sampleSize = 200;
+            rawWaveformData = [];
+
+            for (let i = 0; i < data.length; i += sampleSize) {
+                let peakToPeak = 0;
+                for (let j = 0; j < sampleSize; j++) {
+                    const sample = data[i + j] || 0;
+                    if (sample > peakToPeak) {
+                        peakToPeak = sample;
+                    } else if (sample < -peakToPeak) {
+                        peakToPeak = -sample;
+                    }
+                }
+                rawWaveformData.push(peakToPeak);
+            }
+        }
+
+        function updateProcessedWaveformData() {
+            const width = waveform.clientWidth;
+            const totalBars = Math.floor(width / (barWidth + barGap));
+            const samplesPerBar = Math.floor(rawWaveformData.length / totalBars);
+
+            processedWaveformData = [];
+
+            for (let i = 0; i < totalBars; i++) {
+                let peakToPeak = 0;
+                for (let j = 0; j < samplesPerBar; j++) {
+                    const sample = rawWaveformData[i * samplesPerBar + j] || 0;
+                    if (sample > peakToPeak) {
+                        peakToPeak = sample;
+                    }
+                }
+                processedWaveformData.push(peakToPeak);
+            }
+        }
+
+        function drawWaveform() {
+            const width = waveform.clientWidth;
+            const height = waveform.clientHeight;
+
+            waveformCanvas.width = width;
+            waveformCanvas.height = height;
+            const context = waveformCanvas.getContext('2d');
+
+            const maxAmplitude = Math.max(...processedWaveformData);
+
+            context.clearRect(0, 0, width, height);
+
+            if (visualizationType === 'bars') {
+                for (let i = 0; i < processedWaveformData.length; i++) {
+                    const barHeight = (processedWaveformData[i] / maxAmplitude) * height * 0.8;
+                    const x = i * (barWidth + barGap);
+                    const y = (height - barHeight) / 2;
+
+                    context.fillStyle = i / processedWaveformData.length < pausedAt / audioBuffer.duration ? playedColor : barColor;
+                    context.beginPath();
+                    context.moveTo(x + barRadius, y);
+                    context.lineTo(x + barWidth - barRadius, y);
+                    context.quadraticCurveTo(x + barWidth, y, x + barWidth, y + barRadius);
+                    context.lineTo(x + barWidth, y + barHeight - barRadius);
+                    context.quadraticCurveTo(x + barWidth, y + barHeight, x + barWidth - barRadius, y + barHeight);
+                    context.lineTo(x + barRadius, y + barHeight);
+                    context.quadraticCurveTo(x, y + barHeight, x, y + barHeight - barRadius);
+                    context.lineTo(x, y + barRadius);
+                    context.quadraticCurveTo(x, y, x + barRadius, y);
+                    context.fill();
+                }
+            } else if (visualizationType === 'line') {
+                context.beginPath();
+                context.moveTo(0, height / 2);
+                for (let i = 0; i < processedWaveformData.length; i++) {
+                    const x = i * (barWidth + barGap);
+                    const y = height / 2 - (processedWaveformData[i] / maxAmplitude) * height * 0.4;
+                    context.lineTo(x, y);
+                }
+                context.strokeStyle = barColor;
+                context.lineWidth = 2;
+                context.stroke();
+
+                context.beginPath();
+                context.moveTo(0, height / 2);
+                for (let i = 0; i < processedWaveformData.length; i++) {
+                    const x = i * (barWidth + barGap);
+                    const y = height / 2 - (processedWaveformData[i] / maxAmplitude) * height * 0.4;
+                    if (i / processedWaveformData.length < pausedAt / audioBuffer.duration) {
+                        context.lineTo(x, y);
+                    } else {
+                        break;
+                    }
+                }
+                context.strokeStyle = playedColor;
+                context.lineWidth = 2;
+                context.stroke();
+            } else if (visualizationType === 'circles') {
+                for (let i = 0; i < processedWaveformData.length; i++) {
+                    const radius = (processedWaveformData[i] / maxAmplitude) * height * 0.4;
+                    const x = i * (barWidth + barGap);
+                    const y = height / 2;
+
+                    context.beginPath();
+                    context.arc(x, y, radius, 0, 2 * Math.PI);
+                    context.fillStyle = i / processedWaveformData.length < pausedAt / audioBuffer.duration ? playedColor : barColor;
+                    context.fill();
+                }
+            }
+        }
+
+        function updateVisualization() {
+            barWidth = parseInt(barWidthInput.value);
+            barColor = barColorInput.value;
+            playedColor = playedColorInput.value;
+            barRadius = parseInt(barRadiusInput.value);
+            visualizationType = visualizationTypeSelect.value;
+            updateProcessedWaveformData();
+            drawWaveform();
+        }
+
+        function togglePlayPause() {
+            if (isPlaying) {
+                pauseAudio();
+            } else {
+                playAudio();
+            }
+        }
+
+        function playAudio() {
+            if (!audioBuffer) return;
+
+            audioSource = audioContext.createBufferSource();
+            audioSource.buffer = audioBuffer;
+            audioSource.connect(audioContext.destination);
+            audioSource.playbackRate.value = playbackSpeed;
+
+            if (pausedAt) {
+                startTime = audioContext.currentTime - pausedAt;
+                audioSource.start(0, pausedAt);
+            } else {
+                startTime = audioContext.currentTime;
+                audioSource.start();
+            }
+
+            isPlaying = true;
+            playPauseButton.textContent = 'Pause';
+            updateProgress();
+        }
+
+        function pauseAudio() {
+            if (!audioSource) return;
+
+            audioSource.stop();
+            pausedAt = audioContext.currentTime - startTime;
+            isPlaying = false;
+            playPauseButton.textContent = 'Play';
+        }
+
+        function updateProgress() {
+            if (!isPlaying) return;
+
+            const currentTime = (audioContext.currentTime - startTime) * playbackSpeed;
+            const progress = currentTime / audioBuffer.duration;
+
+            progressOverlay.style.width = `${progress * 100}%`;
+            drawWaveform();
+
+            if (progress < 1) {
+                requestAnimationFrame(updateProgress);
+            } else {
+                isPlaying = false;
+                playPauseButton.textContent = 'Play';
+                progressOverlay.style.width = '0%';
+                pausedAt = 0;
+            }
+        }
+
+        function seekAudio(event) {
+            if (!audioBuffer) return;
+
+            const rect = waveform.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const progress = x / rect.width;
+
+            if (isPlaying) {
+                pauseAudio();
+            }
+
+            pausedAt = progress * audioBuffer.duration;
+            progressOverlay.style.width = `${progress * 100}%`;
+            drawWaveform();
+            playAudio();
+        }
+
+        function handleDrag(event) {
+            if (event.buttons !== 1) return;
+            seekAudio(event);
+        }
+
+        function updatePlaybackSpeed() {
+            playbackSpeed = parseFloat(playbackSpeedSelect.value);
+            if (isPlaying) {
+                pauseAudio();
+                playAudio();
+            }
+        }
+    </script>
+</body>
+</html>
