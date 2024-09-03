@@ -670,13 +670,16 @@
 
             context.clearRect(0, 0, width, height);
 
+            // Calculate the current progress
+            const currentProgress = isPlaying ? (audioContext.currentTime - startTime) * playbackSpeed / audioBuffer.duration : pausedAt / audioBuffer.duration;
+
             if (visualizationType === 'bars') {
                 for (let i = 0; i < processedWaveformData.length; i++) {
                     const barHeight = (processedWaveformData[i] / maxAmplitude) * height * 0.8;
                     const x = i * (barWidth + barGap);
                     const y = (height - barHeight) / 2;
 
-                    context.fillStyle = i / processedWaveformData.length < pausedAt / audioBuffer.duration ? playedColor : barColor;
+                    context.fillStyle = i / processedWaveformData.length < currentProgress ? playedColor : barColor;
                     context.beginPath();
                     context.moveTo(x + barRadius, y);
                     context.lineTo(x + barWidth - barRadius, y);
@@ -723,7 +726,7 @@
 
                     context.beginPath();
                     context.arc(x, y, radius, 0, 2 * Math.PI);
-                    context.fillStyle = i / processedWaveformData.length < pausedAt / audioBuffer.duration ? playedColor : barColor;
+                    context.fillStyle = i / processedWaveformData.length < currentProgress ? playedColor : barColor;
                     context.fill();
                 }
             }
@@ -784,7 +787,7 @@
             const progress = currentTime / audioBuffer.duration;
 
             progressOverlay.style.width = `${progress * 100}%`;
-            drawWaveform();
+            drawWaveform(); // Call drawWaveform here to update the colors
 
             if (progress < 1) {
                 requestAnimationFrame(updateProgress);
@@ -793,6 +796,7 @@
                 playPauseButton.textContent = 'Play';
                 progressOverlay.style.width = '0%';
                 pausedAt = 0;
+                drawWaveform(); // Call drawWaveform one last time to reset the colors
             }
         }
 
